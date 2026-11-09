@@ -1,0 +1,123 @@
+{
+  "session": { "startedAt": "...", "scrolls": 0, "views": 0, "skips": 0, "watchMs": 0 },
+  "reels": {
+    "r1": { "title": "Sunset timelapse", "views": 0, "skips": 0, "watchMs": 0, "lastViewedAt": null }
+  },
+  "daily": { "2026-11-08": { "scrolls": 0, "views": 0 } }
+}        
+
+
+## Guide to efficient API caching
+
+Caching reduces latency, backend load, and cost by reusing responses that are still valid. The key is to cache only data that can safely be reused—and to make expiration and invalidation predictable.
+
+### 1. Choose what to cache
+
+Good candidates are data that is:
+
+- Read frequently and changed relatively rarely
+- Expensive to compute or fetch
+- Safe to share among the requests using the same cache key
+
+Common examples include public catalog data, configuration, reference data, and computed summaries. Avoid caching highly personalized or sensitive responses unless the cache is carefully isolated by user or tenant.
+
+### 2. Use the right cache layer
+
+- **Browser or CDN:** Best for public responses that can be reused across users.
+- **Application cache:** Useful for expensive computations or shared data close to the API.
+- **Database/query cache:** Useful for repeated database work, but monitor invalidation and memory use.
+- **Client-side in-memory cache:** Useful for repeated requests within a single app session.
+
+Use the simplest layer that meets your latency and freshness needs. Multiple layers can help, but make expiration behavior harder to reason about.
+
+### 3. Set HTTP cache headers
+
+For HTTP APIs, cache headers communicate reuse rules to clients and intermediaries.
+
+```http
+Cache-Control: public, max-age=60, s-maxage=300, stale-while-revalidate=30
+ETag: "version-or-content-hash"
+```
+
+- `max-age` controls freshness for browsers and other private caches.
+- `s-maxage` sets a separate freshness lifetime for shared caches such as CDNs.
+- `ETag` lets clients revalidate efficiently using `If-None-Match`; unchanged responses can return `304 Not Modified`.
+- `stale-while-revalidate` allows a cache to serve slightly stale data while fetching an update, where supported.
+
+For responses that must not be stored, use an appropriate directive such as:
+
+```http
+Cache-Control: no-store
+```
+
+Be cautious with `private` versus `public`: personalized responses should not be shared by a CDN.
+
+### 4. Design cache keys carefully
+
+A cache key must include every input that can change the response, such as:
+
+- Resource or endpoint
+- Query parameters that affect results
+- Locale, API version, or content format
+- Tenant or user identity, when the response is personalized
+
+For example:
+
+```text
+product:v3:tenant-42:locale-en:product-781
+```
+
+If a key omits a meaningful input, callers can receive the wrong response. If it includes unnecessary variations, the cache may fragment and have a low hit rate.
+
+### 5. Pick an expiration and invalidation strategy
+
+- **TTL-based:** Expire entries after a fixed period. Simple and often sufficient.
+- **Event-based invalidation:** Evict or update entries when the underlying data changes. Fresher, but more operationally complex.
+- **Versioned keys:** Include a data version in the key so a new version naturally bypasses old entries.
+- **Stale-while-revalidate:** Serve a recent old value while refreshing it in the background.
+
+Many systems combine a TTL with event-based invalidation. Avoid relying on invalidation alone: missed events can leave stale values indefinitely.
+
+### 6. Prevent cache stampedes
+
+When a popular entry expires, many requests may try to recompute it at once. Reduce this risk with:
+
+- **Request coalescing:** Let one request refresh the value while others wait or use a stale value.
+- **TTL jitter:** Add a small random offset to expiration times so many entries do not expire together.
+- **Refresh-ahead:** Refresh frequently used entries before they expire.
+- **Stale fallback:** Serve an acceptable old value if refresh temporarily fails.
+
+### 7. Handle failures and consistency deliberately
+
+Define what happens when the cache is unavailable or stale:
+
+- For noncritical data, falling back to the source may be acceptable.
+- For high-load systems, a fallback can overload the source; use timeouts and concurrency limits.
+- For authorization, balances, or other sensitive state, favor correctness and isolation over cache hit rate.
+
+Never treat a cache as the source of truth unless the system is explicitly designed for that.
+
+### 8. Measure whether caching helps
+
+Track:
+
+- Cache hit and miss rates
+- Response latency
+- Cache errors and evictions
+- Origin requests and database load
+- Entry age or staleness
+- Memory use and key cardinality
+
+A high hit rate is not the only goal: incorrect or excessively stale responses are worse than misses. Compare performance and load before and after changes.
+
+### Practical starting point
+
+1. Identify a frequent, expensive read.
+2. Confirm which callers can safely share its result.
+3. Build a key from all response-affecting inputs.
+4. Set a conservative TTL and appropriate HTTP headers.
+5. Add revalidation or invalidation if freshness requires it.
+6. Test expiration, source failures, and concurrent refreshes.
+7. Monitor hit rate, latency, staleness, and origin load.
+
+This is the GitHub Copilot Chat Assistant.
